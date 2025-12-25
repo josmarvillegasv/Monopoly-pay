@@ -2,122 +2,104 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Monopoly NFC Pro - Josmar</title>
+    <title>Monopoly Digital - Josmar</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="https://cdn.pubnub.com/sdk/javascript/pubnub.4.29.9.min.js"></script>
     <style>
         :root { --p: #2c3e50; --s: #27ae60; --d: #e74c3c; --l: #ecf0f1; }
         body { font-family: 'Segoe UI', sans-serif; background: var(--l); margin: 0; padding: 15px; text-align: center; }
-        .card { background: white; padding: 25px; border-radius: 20px; box-shadow: 0 10px 20px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        .saldo { font-size: 3.5rem; font-weight: bold; color: var(--s); margin: 10px 0; }
-        button { width: 100%; padding: 20px; margin: 8px 0; border: none; border-radius: 12px; font-weight: bold; color: white; cursor: pointer; font-size: 1.1rem; }
-        .btn-nfc-send { background: var(--d); }
-        .btn-nfc-read { background: var(--p); }
-        .status { font-size: 0.8rem; color: #7f8c8d; margin-top: 15px; }
-        #log { background: #333; color: #fff; font-family: monospace; padding: 10px; border-radius: 8px; font-size: 0.7rem; text-align: left; height: 80px; overflow-y: auto; display: none; }
+        .card { background: white; padding: 20px; border-radius: 20px; box-shadow: 0 10px 20px rgba(0,0,0,0.1); margin-bottom: 15px; }
+        .saldo { font-size: 2.8rem; font-weight: bold; color: var(--s); margin: 5px 0; }
+        button { width: 100%; padding: 18px; border: none; border-radius: 12px; font-weight: bold; color: white; cursor: pointer; font-size: 1.1rem; background: var(--s); }
+        .history-container { background: white; border-radius: 15px; padding: 15px; text-align: left; max-height: 200px; overflow-y: auto; box-shadow: inset 0 2px 5px rgba(0,0,0,0.05); }
+        .history-item { font-size: 0.85rem; padding: 8px 0; border-bottom: 1px solid #eee; }
+        .in { color: var(--s); font-weight: bold; }
+        .out { color: var(--d); font-weight: bold; }
+        h3 { font-size: 1rem; color: var(--p); margin-top: 20px; }
     </style>
 </head>
 <body>
 
-    <header><h2>💸 Monopoly NFC Pay</h2></header>
+    <header><h2>💸 Monopoly Online</h2></header>
 
     <div class="card">
         <div id="player-info" style="font-weight: bold; color: var(--p);">...</div>
         <div class="saldo" id="display-saldo">$0</div>
-        <div class="status" id="net-status">Conectando...</div>
+        <div id="net-status" style="font-size: 0.7rem; color: gray;">Conectando...</div>
     </div>
 
-    <button class="btn-nfc-send" onclick="pagarPorNFC()">📱 PAGAR POR NFC</button>
-    <button class="btn-nfc-read" onclick="activarBuzonNFC()">📡 RECIBIR POR NFC</button>
+    <button onclick="enviarDinero()">📤 ENVIAR DINERO</button>
 
-    <div id="log"></div>
+    <h3>Historial de Movimientos</h3>
+    <div class="history-container" id="historial">
+        <div class="history-item" style="color:gray; text-align:center;">No hay transacciones aún.</div>
+    </div>
 
     <script>
-        const SECRET_KEY = "NFC_MONO_2025";
-        let miNombre = localStorage.getItem('nfc_name') || prompt("Nombre del jugador:");
-        localStorage.setItem('nfc_name', miNombre);
+        let miNombre = localStorage.getItem('mono_name') || prompt("Tu nombre:");
+        if(!miNombre) miNombre = "Jugador_" + Math.floor(Math.random()*1000);
+        localStorage.setItem('mono_name', miNombre);
         document.getElementById('player-info').innerText = "JUGADOR: " + miNombre.toUpperCase();
 
-        let saldo = parseInt(localStorage.getItem('nfc_saldo')) || 1500;
+        let saldo = parseInt(localStorage.getItem('mono_saldo')) || 1500;
+        let historial = JSON.parse(localStorage.getItem('mono_historial')) || [];
 
-        // Configuración de PubNub para sincronización en la nube
         const pubnub = new PubNub({
             publishKey: 'pub-c-490333d4-b789-4076-902e-c75240292701',
             subscribeKey: 'sub-c-0740a6b4-022e-11eb-a2b8-0a64736f8303',
             uuid: miNombre
         });
 
-        pubnub.subscribe({ channels: ['nfc_monopoly'] });
+        pubnub.subscribe({ channels: ['monopoly_directo'] });
         pubnub.addListener({
             message: (m) => {
                 if (m.message.to === miNombre) {
                     saldo += m.message.amount;
+                    agregarHistorial(`Recibiste de ${m.message.from}`, m.message.amount, 'in');
                     actualizar();
-                    alert(`¡Recibido $${m.message.amount} de ${m.message.from}!`);
                 }
             }
         });
 
         function actualizar() {
-            document.getElementById('display-saldo').innerText = '$' + saldo.toLocaleString('de-DE');
-            localStorage.setItem('nfc_saldo', saldo);
-            document.getElementById('net-status').innerText = "En Línea (NFC Listo)";
+            const formato = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2 }).format(saldo);
+            document.getElementById('display-saldo').innerText = '$' + formato;
+            localStorage.setItem('mono_saldo', saldo);
+            localStorage.setItem('mono_historial', JSON.stringify(historial));
+            dibujarHistorial();
+            document.getElementById('net-status').innerText = "Servidor Activo";
         }
 
-        // Lógica para PAGAR (Escribir en la antena del otro)
-        async function pagarPorNFC() {
-            const receptor = prompt("¿A quién le pagas?");
+        function agregarHistorial(msg, monto, tipo) {
+            historial.unshift({ msg, monto, tipo, fecha: new Date().toLocaleTimeString() });
+            if(historial.length > 10) historial.pop();
+        }
+
+        function dibujarHistorial() {
+            const cont = document.getElementById('historial');
+            if(historial.length === 0) return;
+            cont.innerHTML = historial.map(h => `
+                <div class="history-item">
+                    <small>${h.fecha}</small> | ${h.msg} <span class="${h.tipo}">${h.tipo === 'in' ? '+' : '-'}$${h.monto}</span>
+                </div>
+            `).join('');
+        }
+
+        async function enviarDinero() {
+            const receptor = prompt("¿A quién envías?");
+            if (!receptor) return;
             const monto = parseInt(prompt("Monto:"));
-            if (monto > saldo) return alert("Saldo insuficiente.");
+            if (isNaN(monto) || monto <= 0 || monto > saldo) return alert("Monto inválido o insuficiente");
 
-            const nOp = Math.floor(Math.random()*9999);
-            const firma = btoa(`${monto}-${miNombre}-${receptor}-${nOp}-${SECRET_KEY}`).substring(0,8);
-            const token = `MONO|${monto}|${miNombre}|${receptor}|${nOp}|${firma}`;
-
-            if ('NDEFReader' in window) {
-                try {
-                    const ndef = new NDEFReader();
-                    await ndef.write(token);
-                    
-                    // Al escribir con éxito, descontamos y notificamos por nube también
-                    saldo -= monto;
-                    pubnub.publish({ channel: 'nfc_monopoly', message: { from: miNombre, to: receptor, amount: monto } });
-                    actualizar();
-                    alert("¡Pago enviado por NFC y Nube!");
-                } catch (error) {
-                    alert("Error NFC: " + error);
-                }
-            } else {
-                alert("NFC no soportado en este navegador.");
-            }
-        }
-
-        // Lógica para RECIBIR (Leer la antena del otro)
-        async function activarBuzonNFC() {
-            if ('NDEFReader' in window) {
-                try {
-                    const ndef = new NDEFReader();
-                    await ndef.scan();
-                    alert("📡 Buzón abierto. Acerquen el teléfono del pagador.");
-
-                    ndef.onreading = event => {
-                        const decoder = new TextDecoder();
-                        for (const record of event.message.records) {
-                            const texto = decoder.decode(record.data);
-                            procesarToken(texto);
-                        }
-                    };
-                } catch (error) {
-                    alert("Error al activar lectura: " + error);
-                }
-            }
-        }
-
-        function procesarToken(token) {
-            const [pref, monto, emisor, receptor, nOp, firma] = token.split('|');
-            if (receptor !== miNombre) return alert("Este pago es para " + receptor);
-            // La validación de saldo ya ocurre por la nube, el NFC es el disparador
-            alert("Procesando pago físico de " + emisor);
+            try {
+                await pubnub.publish({
+                    channel: 'monopoly_directo',
+                    message: { from: miNombre, to: receptor, amount: monto }
+                });
+                saldo -= monto;
+                agregarHistorial(`Enviaste a ${receptor}`, monto, 'out');
+                actualizar();
+            } catch (e) { alert("Error de red"); }
         }
 
         actualizar();
